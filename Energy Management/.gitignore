@@ -1,0 +1,16 @@
+# Root
+.idea/
+.DS_Store
+*.log
+docker-compose.override.yml
+
+# Backend
+target/
+*.class
+*.jar
+
+# Frontend
+node_modules/
+build/
+.env.local
+npm-debug.log
