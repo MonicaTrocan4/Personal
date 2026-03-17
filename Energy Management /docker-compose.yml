@@ -1,0 +1,344 @@
+version: '3.8'
+
+services:
+  # ------------------------------------
+  # SOCKET PROXY
+  # ------------------------------------
+  socket-proxy:
+    image: alpine/socat
+    user: root
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command: tcp-listen:2375,fork,reuseaddr,bind=0.0.0.0 unix-connect:/var/run/docker.sock
+    networks:
+      - energy-net
+    deploy:
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints:
+          - node.role == manager
+
+  # ------------------------------------
+  # TRAEFIK
+  # ------------------------------------
+  traefik:
+    image: "traefik:v2.11"
+    depends_on:
+      - socket-proxy
+    environment:
+      - TRAEFIK_PROVIDERS_DOCKER_APIVERSION=1.41
+      - TRAEFIK_PROVIDERS_DOCKER_SWARMMODE=true
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.endpoint=tcp://socket-proxy:2375"
+      - "--providers.docker.swarmMode=true"
+      - "--entrypoints.web.address=:80"
+    ports:
+      - "80:80"
+      - "8088:8080"
+    networks:
+      - energy-net
+    deploy:
+      placement:
+        constraints:
+          - node.role == manager
+
+  # ------------------------------------
+  # MESSAGE BROKER
+  # ------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.8-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - energy-net
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      restart_policy:
+        condition: on-failure
+
+  # ------------------------------------
+  # DATABASES
+  # ------------------------------------
+  user-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: user-db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: monica1234
+    volumes:
+      - user-data:/var/lib/postgresql/data
+    networks:
+      - energy-net
+
+  device-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: device-db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: monica1234
+    volumes:
+      - device-data:/var/lib/postgresql/data
+    networks:
+      - energy-net
+
+  auth-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: credentials-db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: monica1234
+    volumes:
+      - auth-data:/var/lib/postgresql/data
+    networks:
+      - energy-net
+
+  measurements-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: measurements-db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: monica1234
+    volumes:
+      - measurements-db-data:/var/lib/postgresql/data
+    networks:
+      - energy-net
+
+  chat-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: chat-db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: monica1234
+    volumes:
+      - chat-data:/var/lib/postgresql/data
+    networks:
+      - energy-net
+
+  # ------------------------------------
+  # LOAD BALANCER
+  # ------------------------------------
+  load-balancer:
+    image: energy-load-balancer:latest
+    build: ./load-balancer
+    depends_on:
+      - rabbitmq
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      MONITORING_REPLICAS: ${MONITORING_REPLICAS:-2}
+      SERVER_PORT: 8086
+    networks:
+      - energy-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  # ------------------------------------
+  # MICROSERVICES
+  # ------------------------------------
+
+  monitoring-service:
+    image: energy-monitoring-service:latest
+    build: ./monitoring-microservice
+    depends_on:
+      - rabbitmq
+      - measurements-db
+    environment:
+      SERVER_PORT: 8083
+      SPRING_DATASOURCE_URL: jdbc:postgresql://measurements-db:5432/measurements-db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: monica1234
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+    networks:
+      - energy-net
+    hostname: "monitoring-{{.Task.Slot}}"
+    deploy:
+      replicas: ${MONITORING_REPLICAS:-2}
+      restart_policy:
+        condition: on-failure
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.monitoring.rule=PathPrefix(`/monitoring`)"
+        - "traefik.http.services.monitoring.loadbalancer.server.port=8083"
+
+  user-service:
+    image: energy-user-service:latest
+    build: ./user-microservice
+    depends_on:
+      - user-db
+      - rabbitmq
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://user-db:5432/user-db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: monica1234
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      DEVICE_SERVICE_URL: http://device-service:8081/sync/users
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      SERVER_PORT: 8080
+    networks:
+      - energy-net
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.user.rule=PathPrefix(`/people`)"
+        - "traefik.http.services.user.loadbalancer.server.port=8080"
+
+  device-service:
+    image: energy-device-service:latest
+    build: ./device-microservice
+    depends_on:
+      - device-db
+      - rabbitmq
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://device-db:5432/device-db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: monica1234
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      SERVER_PORT: 8081
+    networks:
+      - energy-net
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.device.rule=PathPrefix(`/devices`) || PathPrefix(`/sync`)"
+        - "traefik.http.services.device.loadbalancer.server.port=8081"
+
+  auth-service:
+    image: energy-auth-service:latest
+    build: ./auth-microservice
+    depends_on:
+      - auth-db
+      - user-service
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://auth-db:5432/credentials-db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: monica1234
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SERVER_PORT: 8082
+      USER_SERVICE_URL: http://user-service:8080/people
+    networks:
+      - energy-net
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.auth.rule=PathPrefix(`/auth`)"
+        - "traefik.http.services.auth.loadbalancer.server.port=8082"
+
+  chat-service:
+    image: energy-chat-service:latest
+    build: ./chat-microservice
+    depends_on:
+      - chat-db
+      - rabbitmq
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://chat-db:5432/chat-db
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: monica1234
+      SPRING_JPA_HIBERNATE_DDL_AUTO: update
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      SERVER_PORT: 8085
+    networks:
+      - energy-net
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.chat.rule=PathPrefix(`/chat`)"
+        - "traefik.http.services.chat.loadbalancer.server.port=8085"
+
+  websocket-service:
+    image: energy-websocket-service:latest
+    build: ./websocket-microservice
+    depends_on:
+      - rabbitmq
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: guest
+      SPRING_RABBITMQ_PASSWORD: guest
+      SERVER_PORT: 8084
+    networks:
+      - energy-net
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.websocket.rule=PathPrefix(`/ws`) || PathPrefix(`/test`)"
+        - "traefik.http.services.websocket.loadbalancer.server.port=8084"
+
+  # ------------------------------------
+  # SIMULATOR (MANUAL START)
+  # ------------------------------------
+  sensor-simulator:
+    image: energy-sensor-simulator:latest
+    build: ./sensor-simulator
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+    depends_on:
+      - rabbitmq
+    networks:
+      - energy-net
+    deploy:
+      replicas: 0
+      restart_policy:
+        condition: on-failure
+
+  # ------------------------------------
+  # FRONTEND
+  # ------------------------------------
+  frontend:
+    image: energy-frontend-react:latest
+    build: ./react-demo
+    stdin_open: true
+    tty: true
+    environment:
+      - WDS_SOCKET_PORT=0
+    networks:
+      - energy-net
+    depends_on:
+      - auth-service
+      - user-service
+      - device-service
+      - monitoring-service
+      - chat-service
+    deploy:
+      labels:
+        - "traefik.enable=true"
+        - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+        - "traefik.http.routers.frontend.priority=1"
+        - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+volumes:
+  user-data:
+  device-data:
+  auth-data:
+  measurements-db-data:
+  chat-data:
+
+networks:
+  energy-net:
+    driver: overlay
