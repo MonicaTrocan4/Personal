@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expense Tracker</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css?family=Poppins:100,100italic,200,200italic,300,300italic,regular,italic,500,500italic,600,600italic,700,700italic,800,800italic,900,900italic" rel="stylesheet" />
+</head>
+<body>
+
+    <div id="report-modal" class="modal">
+        <div class="modal-content">
+            <span class="close-modal">&times;</span>
+            <h2 id="modal-title" style="margin-bottom: 20px;">Detalii Lună</h2>
+            
+            <div id="modal-summary" class="modal-summary"></div>
+            
+            <h3 class="modal-subtitle">Istoric Tranzacții</h3>
+            <div id="modal-details-list" class="modal-transactions"></div>
+        </div>
+    </div>
+
+    <div class="container">
+        <button id="theme-toggle" title="Toggle Dark/Light Mode">🌙</button>
+
+        <h1>Expense Tracker</h1>
+
+        <div class="balance-container">
+            <h2>Your Balance</h2>
+            <h1 id="balance">$0.00</h1>
+
+            <div class="budget-section">
+                <div class="budget-header">
+                    <h3>Monthly Budget</h3>
+                    <button onclick="openBudgetModal()" class="edit-budget-btn">✎ Set</button>
+                </div>
+                <div class="progress-container">
+                    <div id="budget-progress" class="progress-bar"></div>
+                </div>
+                <p id="budget-text">No budget set.</p>
+            </div>
+
+            <div class="summary">
+                <div class="income">
+                    <h3>Income</h3>
+                    <p id="income-amount">$0.00</p>
+                </div>
+                <div class="expenses">
+                    <h3>Expenses</h3>
+                    <p id="expense-amount">$0.00</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="chart-wrapper">
+            <canvas id="balanceChart"></canvas>
+        </div>
+
+        <div class="main-content">
+            <div class="transaction-container">
+                <h2>Transactions</h2>
+                
+                <div class="filter-container">
+                    <button class="filter-btn active" onclick="setFilter('all')" id="btn-all">All</button>
+                    <button class="filter-btn" onclick="setFilter('income')" id="btn-income">Income</button>
+                    <button class="filter-btn" onclick="setFilter('expense')" id="btn-expense">Expenses</button>
+                </div>
+                <ul id="transaction-list"></ul>
+            </div>
+
+            <div class="form-container">
+                <h2>Add Transaction</h2>
+
+                <form id="transaction-form">
+                    <div class="form-group">
+                        <label for="description">Description</label>
+                        <input type="text" id="description" placeholder="Enter description..." required />
+                    </div>
+
+                    <div class="form-group">
+                        <label for="amount">Amount</label>
+                        <input type="number" id="amount" placeholder="Enter amount..." required />
+                        <small>Use negative (-) for expenses</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="category">Category</label>
+                        <select id="category" required>
+                            <option value="Food">Food</option>
+                            <option value="Rent">Rent/Bills</option>
+                            <option value="Salary">Salary</option>
+                            <option value="Entertainment">Entertainment</option>
+                            <option value="Transport">Transport</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="date">Date</label>
+                        <input type="date" id="date" required />
+                    </div>
+
+                    <button type="submit">Add Transaction</button>
+                </form>
+            </div>
+        </div>
+        
+        <button onclick="saveMonthlyReport()" class="report-btn">Save Monthly Report</button>
+
+        <div class="reports-section">
+            <h2>Saved Reports History</h2>
+            <div id="reports-list"></div>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="modal">
+        <div class="modal-content confirm-content">
+            <h2 id="confirm-title">Confirmare</h2>
+            <p id="confirm-message">Ești sigur că vrei să faci asta?</p>
+            <div class="confirm-actions">
+                <button id="confirm-no" class="btn-no">Cancel</button>
+                <button id="confirm-yes" class="btn-yes">Yes</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="budget-modal" class="modal">
+        <div class="modal-content confirm-content">
+            <h2>Set Monthly Budget</h2>
+            <p style="color: var(--text-main); margin-bottom: 20px; font-size: 0.95rem;">Enter your maximum budget for the current month:</p>
+            
+            <input type="number" id="budget-input" placeholder="e.g. 2000" style="text-align: center; font-size: 1.2rem; font-weight: 600;" />
+            
+            <div class="confirm-actions">
+                <button onclick="clearBudget()" class="btn-delete" id="btn-clear-budget">Clear</button>
+                <button onclick="closeBudgetModal()" class="btn-no">Cancel</button>
+                <button onclick="saveBudgetFromModal()" class="btn-yes">Save</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="script.js"></script>
+</body>
+</html>
